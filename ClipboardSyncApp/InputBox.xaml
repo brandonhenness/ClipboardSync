@@ -1,0 +1,15 @@
+﻿<Window x:Class="ClipboardSyncApp.InputBox"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Clipboard Sync" Height="200" Width="400">
+    <Grid>
+        <StackPanel>
+            <TextBlock x:Name="PromptTextBlock" Text="Prompt:" Margin="10"/>
+            <TextBox x:Name="ResponseTextBox" Margin="10"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <Button Content="OK" Width="75" Margin="5" Click="OKButton_Click"/>
+                <Button Content="Cancel" Width="75" Margin="5" Click="CancelButton_Click"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>

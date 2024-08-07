@@ -63,23 +63,17 @@ namespace ClipboardSyncApp
                     }
 
                     var trayMenu = new WinForms.ContextMenuStrip();
+                    var settingsSubMenu = new WinForms.ToolStripMenuItem("Settings");
+                    settingsSubMenu.DropDownItems.Add("Start with Windows", null, ToggleStartWithWindows);
+                    settingsSubMenu.DropDownItems.Add("Change Flash Drive Label", null, ChangeFlashDriveLabel_Click);
+
+                    var helpSubMenu = new WinForms.ToolStripMenuItem("Help");
+                    helpSubMenu.DropDownItems.Add("About", null, OpenAbout);
+
                     trayMenu.Items.Add("ClipboardSyncApp", null); // Title
                     trayMenu.Items.Add(new WinForms.ToolStripSeparator());
-
-                    // Settings submenu
-                    var settingsMenu = new WinForms.ToolStripMenuItem("Settings");
-                    var startWithWindowsItem = new WinForms.ToolStripMenuItem("Start with Windows")
-                    {
-                        CheckOnClick = true
-                    };
-                    startWithWindowsItem.CheckedChanged += StartWithWindowsItem_CheckedChanged;
-                    settingsMenu.DropDownItems.Add(startWithWindowsItem);
-                    settingsMenu.DropDownItems.Add("Change Flash Drive Label", null, ChangeFlashDriveLabel_Click);
-
-                    trayMenu.Items.Add(settingsMenu);
-
-                    trayMenu.Items.Add(new WinForms.ToolStripSeparator());
-                    trayMenu.Items.Add("About", null, OpenAbout);
+                    trayMenu.Items.Add(settingsSubMenu);
+                    trayMenu.Items.Add(helpSubMenu);
                     trayMenu.Items.Add(new WinForms.ToolStripSeparator());
                     trayMenu.Items.Add("Exit", null, Exit);
 
@@ -93,22 +87,27 @@ namespace ClipboardSyncApp
             }
         }
 
-        private void StartWithWindowsItem_CheckedChanged(object? sender, EventArgs e)
+        private void ToggleStartWithWindows(object? sender, EventArgs e)
         {
-            var menuItem = sender as WinForms.ToolStripMenuItem;
-            if (menuItem != null)
-            {
-                // Handle the logic to start with Windows based on menuItem.Checked
-                bool startWithWindows = menuItem.Checked;
-                // Update the setting accordingly
-                UpdateStartWithWindowsSetting(startWithWindows);
-            }
+            bool currentValue = bool.Parse(AppConfig.AppSettings.Settings["StartWithWindows"].Value);
+            AppConfig.AppSettings.Settings["StartWithWindows"].Value = (!currentValue).ToString();
+            AppConfig.Save(ConfigurationSaveMode.Modified);
+            LogMessage($"Start with Windows set to: {!currentValue}");
         }
 
-        private void UpdateStartWithWindowsSetting(bool startWithWindows)
+        private void ChangeFlashDriveLabel_Click(object? sender, EventArgs e)
         {
-            // Implement the logic to update the start with Windows setting
-            // For example, you might add/remove the app from the startup registry
+            var inputBox = new InputBox("Enter new flash drive label:", "Change Flash Drive Label");
+            if (inputBox.ShowDialog() == true)
+            {
+                string newLabel = inputBox.ResponseText;
+                if (!string.IsNullOrEmpty(newLabel))
+                {
+                    AppConfig.AppSettings.Settings["FlashDriveLabel"].Value = newLabel;
+                    AppConfig.Save(ConfigurationSaveMode.Modified);
+                    LogMessage($"Flash drive label changed to: {newLabel}");
+                }
+            }
         }
 
         private void ClipboardChanged(object? sender, EventArgs e)
@@ -135,25 +134,28 @@ namespace ClipboardSyncApp
 
             try
             {
-                // Delete all previous clipboard files and directories
-                DeleteAllClipboardData();
-
                 if (clipboardData.GetDataPresent(System.Windows.DataFormats.Html))
                 {
+                    await DeleteExistingFilesAsync(new string[] { htmlFilePath, rtfFilePath, flashDrivePath });
+
                     string htmlData = (string)clipboardData.GetData(System.Windows.DataFormats.Html);
-                    File.WriteAllText(htmlFilePath, htmlData);
-                    File.WriteAllText(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = System.Windows.DataFormats.Html.ToString(), Data = ClipboardHtmlFileName }));
+                    await File.WriteAllTextAsync(htmlFilePath, htmlData);
+                    await File.WriteAllTextAsync(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = System.Windows.DataFormats.Html.ToString(), Data = ClipboardHtmlFileName }));
                 }
                 else if (clipboardData.GetDataPresent(System.Windows.DataFormats.Rtf))
                 {
+                    await DeleteExistingFilesAsync(new string[] { htmlFilePath, rtfFilePath, flashDrivePath });
+
                     string rtfData = (string)clipboardData.GetData(System.Windows.DataFormats.Rtf);
-                    File.WriteAllText(rtfFilePath, rtfData);
-                    File.WriteAllText(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = System.Windows.DataFormats.Rtf.ToString(), Data = ClipboardRtfFileName }));
+                    await File.WriteAllTextAsync(rtfFilePath, rtfData);
+                    await File.WriteAllTextAsync(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = System.Windows.DataFormats.Rtf.ToString(), Data = ClipboardRtfFileName }));
                 }
                 else if (clipboardData.GetDataPresent(System.Windows.DataFormats.Text))
                 {
+                    await DeleteExistingFilesAsync(new string[] { htmlFilePath, rtfFilePath, flashDrivePath });
+
                     string textData = (string)clipboardData.GetData(System.Windows.DataFormats.Text);
-                    File.WriteAllText(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = System.Windows.DataFormats.Text.ToString(), Data = textData }));
+                    await File.WriteAllTextAsync(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = System.Windows.DataFormats.Text.ToString(), Data = textData }));
                 }
                 else if (clipboardData.GetDataPresent(System.Windows.DataFormats.FileDrop))
                 {
@@ -162,6 +164,17 @@ namespace ClipboardSyncApp
 
                     string[] files = (string[])clipboardData.GetData(System.Windows.DataFormats.FileDrop);
                     var relativePaths = new List<string>();
+
+                    if (File.Exists(flashDrivePath))
+                    {
+                        string existingDataJson = await File.ReadAllTextAsync(flashDrivePath);
+                        var existingData = JsonSerializer.Deserialize<ClipboardData>(existingDataJson);
+                        if (existingData != null && existingData.Type == System.Windows.DataFormats.FileDrop.ToString())
+                        {
+                            string[] existingFiles = existingData.Data.Split(';');
+                            await DeleteExistingFilesAsync(existingFiles.Select(f => Path.Combine(GetFlashDrivePath(), f)).ToArray());
+                        }
+                    }
 
                     for (int i = 0; i < files.Length; i++)
                     {
@@ -179,13 +192,13 @@ namespace ClipboardSyncApp
                         relativePaths.Add(fileName);
                     }
 
-                    File.WriteAllText(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = System.Windows.DataFormats.FileDrop.ToString(), Data = string.Join(";", relativePaths) }));
+                    await File.WriteAllTextAsync(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = System.Windows.DataFormats.FileDrop.ToString(), Data = string.Join(";", relativePaths) }));
 
                     progressWindow.Close();
                 }
                 else
                 {
-                    File.WriteAllText(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = "Unknown", Data = "Unsupported clipboard data format" }));
+                    await File.WriteAllTextAsync(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = "Unknown", Data = "Unsupported clipboard data format" }));
                 }
             }
             catch (System.Runtime.InteropServices.COMException ex)
@@ -197,6 +210,78 @@ namespace ClipboardSyncApp
                 LogMessage($"Error saving clipboard to flash drive: {ex.Message}\n{ex.StackTrace}");
             }
         }
+
+        private async Task CopyFileAsync(string sourceFile, string destinationFile, int currentItem, int totalItems)
+        {
+            progressWindow.Dispatcher.Invoke(() =>
+            {
+                progressWindow.ProgressBar.Maximum = totalItems;
+                progressWindow.ProgressBar.Value = currentItem + 1;
+            });
+
+            try
+            {
+                using (FileStream sourceStream = new FileStream(sourceFile, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (FileStream destinationStream = new FileStream(destinationFile, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    await sourceStream.CopyToAsync(destinationStream);
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"Error copying file '{sourceFile}' to '{destinationFile}': {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        private async Task CopyDirectoryAsync(string sourceDir, string destinationDir, int currentItem, int totalItems)
+        {
+            Directory.CreateDirectory(destinationDir);
+
+            DirectoryInfo dir = new DirectoryInfo(sourceDir);
+            FileInfo[] files = dir.GetFiles();
+            DirectoryInfo[] subDirs = dir.GetDirectories();
+
+            progressWindow.Dispatcher.Invoke(() =>
+            {
+                progressWindow.ProgressBar.Maximum = totalItems;
+                progressWindow.ProgressBar.Value = currentItem + 1;
+            });
+
+            foreach (FileInfo file in files)
+            {
+                string tempPath = Path.Combine(destinationDir, file.Name);
+                await CopyFileAsync(file.FullName, tempPath, currentItem, totalItems);
+            }
+
+            foreach (DirectoryInfo subDir in subDirs)
+            {
+                string tempPath = Path.Combine(destinationDir, subDir.Name);
+                await CopyDirectoryAsync(subDir.FullName, tempPath, currentItem, totalItems);
+            }
+        }
+
+        private async Task DeleteExistingFilesAsync(string[] files)
+        {
+            foreach (var file in files)
+            {
+                try
+                {
+                    if (File.Exists(file))
+                    {
+                        await Task.Run(() => File.Delete(file));
+                    }
+                    else if (Directory.Exists(file))
+                    {
+                        await Task.Run(() => Directory.Delete(file, true));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"Error deleting file or directory '{file}': {ex.Message}\n{ex.StackTrace}");
+                }
+            }
+        }
+
 
         private void LoadClipboardFromFlashDrive()
         {
@@ -350,54 +435,6 @@ namespace ClipboardSyncApp
             }
         }
 
-        private async Task CopyDirectoryAsync(string sourceDir, string destinationDir, int currentItem, int totalItems)
-        {
-            Directory.CreateDirectory(destinationDir);
-
-            DirectoryInfo dir = new DirectoryInfo(sourceDir);
-            FileInfo[] files = dir.GetFiles();
-            DirectoryInfo[] subDirs = dir.GetDirectories();
-
-            progressWindow.Dispatcher.Invoke(() =>
-            {
-                progressWindow.ProgressBar.Maximum = totalItems;
-                progressWindow.ProgressBar.Value = currentItem;
-            });
-
-            foreach (FileInfo file in files)
-            {
-                string tempPath = Path.Combine(destinationDir, file.Name);
-                await CopyFileAsync(file.FullName, tempPath, currentItem, totalItems);
-            }
-
-            foreach (DirectoryInfo subDir in subDirs)
-            {
-                string tempPath = Path.Combine(destinationDir, subDir.Name);
-                await CopyDirectoryAsync(subDir.FullName, tempPath, currentItem, totalItems);
-            }
-        }
-
-        private async Task CopyFileAsync(string sourceFile, string destinationFile, int currentItem, int totalItems)
-        {
-            progressWindow.Dispatcher.Invoke(() =>
-            {
-                progressWindow.ProgressBar.Maximum = totalItems;
-                progressWindow.ProgressBar.Value = currentItem;
-            });
-
-            using (FileStream sourceStream = new FileStream(sourceFile, FileMode.Open))
-            using (FileStream destinationStream = new FileStream(destinationFile, FileMode.Create))
-            {
-                await sourceStream.CopyToAsync(destinationStream);
-            }
-        }
-
-        private void OpenSettings(object? sender, EventArgs e)
-        {
-            SettingsWindow settingsWindow = new SettingsWindow();
-            settingsWindow.ShowDialog();
-        }
-
         private void OpenAbout(object? sender, EventArgs e)
         {
             System.Windows.MessageBox.Show("ClipboardSyncApp v1.0\n\nThis application synchronizes your clipboard content with a flash drive.", "About ClipboardSyncApp", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -415,22 +452,6 @@ namespace ClipboardSyncApp
             catch (Exception ex)
             {
                 LogMessage($"Error checking for flash drive: {ex.Message}\n{ex.StackTrace}");
-            }
-        }
-
-        private void DeleteAllClipboardData()
-        {
-            string flashDrivePath = GetFlashDrivePath();
-            if (Directory.Exists(flashDrivePath))
-            {
-                foreach (var file in Directory.GetFiles(flashDrivePath))
-                {
-                    File.Delete(file);
-                }
-                foreach (var dir in Directory.GetDirectories(flashDrivePath))
-                {
-                    Directory.Delete(dir, true);
-                }
             }
         }
     }
@@ -504,5 +525,4 @@ namespace ClipboardSyncApp
         public string Type { get; set; } = string.Empty;
         public string Data { get; set; } = string.Empty;
     }
-
 }
