@@ -21,6 +21,8 @@ namespace ClipboardSyncApp
         private static readonly string ClipboardRtfFileName = "clipboard_data.rtf";
         private ProgressWindow progressWindow = new ProgressWindow();
         Configuration AppConfig = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
+        private static SemaphoreSlim semaphore = new SemaphoreSlim(1, 1);
+        private static bool isEventRegistered = false;
 
         public MainWindow()
         {
@@ -30,7 +32,11 @@ namespace ClipboardSyncApp
             InitializeComponent();
             this.Hide(); // Ensure MainWindow is hidden at startup
             SetupTrayIcon();
-            ClipboardNotification.ClipboardUpdate += ClipboardChanged;
+            if (!isEventRegistered)
+            {
+                ClipboardNotification.ClipboardUpdate += ClipboardChanged;
+                isEventRegistered = true;
+            }
             CheckForFlashDriveAndLoadClipboard();
         }
 
@@ -112,11 +118,13 @@ namespace ClipboardSyncApp
 
         private void ClipboardChanged(object? sender, EventArgs e)
         {
+            LogMessage("ClipboardChanged event triggered.");
             try
             {
                 var clipboardData = WpfClipboard.GetDataObject();
                 if (clipboardData != null)
                 {
+                    LogMessage("Clipboard data obtained.");
                     SaveClipboardToFlashDrive(clipboardData);
                 }
             }
@@ -128,14 +136,17 @@ namespace ClipboardSyncApp
 
         private async void SaveClipboardToFlashDrive(System.Windows.IDataObject clipboardData)
         {
-            string flashDrivePath = Path.Combine(GetFlashDrivePath(), ClipboardDataFileName);
-            string htmlFilePath = Path.Combine(GetFlashDrivePath(), ClipboardHtmlFileName);
-            string rtfFilePath = Path.Combine(GetFlashDrivePath(), ClipboardRtfFileName);
-
+            await semaphore.WaitAsync();
             try
             {
+                LogMessage("SaveClipboardToFlashDrive started.");
+                string flashDrivePath = Path.Combine(GetFlashDrivePath(), ClipboardDataFileName);
+                string htmlFilePath = Path.Combine(GetFlashDrivePath(), ClipboardHtmlFileName);
+                string rtfFilePath = Path.Combine(GetFlashDrivePath(), ClipboardRtfFileName);
+
                 if (clipboardData.GetDataPresent(System.Windows.DataFormats.Html))
                 {
+                    LogMessage("Clipboard data is HTML.");
                     await DeleteExistingFilesAsync(new string[] { htmlFilePath, rtfFilePath, flashDrivePath });
 
                     string htmlData = (string)clipboardData.GetData(System.Windows.DataFormats.Html);
@@ -144,6 +155,7 @@ namespace ClipboardSyncApp
                 }
                 else if (clipboardData.GetDataPresent(System.Windows.DataFormats.Rtf))
                 {
+                    LogMessage("Clipboard data is RTF.");
                     await DeleteExistingFilesAsync(new string[] { htmlFilePath, rtfFilePath, flashDrivePath });
 
                     string rtfData = (string)clipboardData.GetData(System.Windows.DataFormats.Rtf);
@@ -152,6 +164,7 @@ namespace ClipboardSyncApp
                 }
                 else if (clipboardData.GetDataPresent(System.Windows.DataFormats.Text))
                 {
+                    LogMessage("Clipboard data is Text.");
                     await DeleteExistingFilesAsync(new string[] { htmlFilePath, rtfFilePath, flashDrivePath });
 
                     string textData = (string)clipboardData.GetData(System.Windows.DataFormats.Text);
@@ -159,6 +172,7 @@ namespace ClipboardSyncApp
                 }
                 else if (clipboardData.GetDataPresent(System.Windows.DataFormats.FileDrop))
                 {
+                    LogMessage("Clipboard data is FileDrop.");
                     progressWindow = new ProgressWindow();
                     progressWindow.Show();
 
@@ -198,6 +212,7 @@ namespace ClipboardSyncApp
                 }
                 else
                 {
+                    LogMessage("Clipboard data is Unknown.");
                     await File.WriteAllTextAsync(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = "Unknown", Data = "Unsupported clipboard data format" }));
                 }
             }
@@ -208,6 +223,10 @@ namespace ClipboardSyncApp
             catch (Exception ex)
             {
                 LogMessage($"Error saving clipboard to flash drive: {ex.Message}\n{ex.StackTrace}");
+            }
+            finally
+            {
+                semaphore.Release();
             }
         }
 
@@ -281,7 +300,6 @@ namespace ClipboardSyncApp
                 }
             }
         }
-
 
         private void LoadClipboardFromFlashDrive()
         {
@@ -442,10 +460,12 @@ namespace ClipboardSyncApp
 
         private void CheckForFlashDriveAndLoadClipboard()
         {
+            LogMessage("Checking for flash drive at startup.");
             try
             {
                 if (IsFlashDriveConnected())
                 {
+                    LogMessage("Flash drive is connected at startup.");
                     LoadClipboardFromFlashDrive();
                 }
             }
