@@ -1,0 +1,13 @@
+﻿<Window x:Class="ClipboardSyncApp.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Settings" Height="200" Width="400">
+    <Grid>
+        <StackPanel>
+            <TextBlock Text="Flash Drive Label:" Margin="10"/>
+            <TextBox x:Name="FlashDriveLabelTextBox" Margin="10"/>
+            <CheckBox x:Name="StartWithWindowsCheckBox" Content="Start with Windows" Margin="10"/>
+            <Button Content="Save" Click="SaveButton_Click" Margin="10"/>
+        </StackPanel>
+    </Grid>
+</Window>
