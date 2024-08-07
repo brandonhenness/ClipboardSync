@@ -31,7 +31,6 @@ namespace ClipboardSyncApp
             this.Hide(); // Ensure MainWindow is hidden at startup
             SetupTrayIcon();
             ClipboardNotification.ClipboardUpdate += ClipboardChanged;
-            ClipboardNotification.Start(); // Ensure ClipboardNotification is started
             CheckForFlashDriveAndLoadClipboard();
         }
 
@@ -66,7 +65,20 @@ namespace ClipboardSyncApp
                     var trayMenu = new WinForms.ContextMenuStrip();
                     trayMenu.Items.Add("ClipboardSyncApp", null); // Title
                     trayMenu.Items.Add(new WinForms.ToolStripSeparator());
-                    trayMenu.Items.Add("Settings", null, OpenSettings);
+
+                    // Settings submenu
+                    var settingsMenu = new WinForms.ToolStripMenuItem("Settings");
+                    var startWithWindowsItem = new WinForms.ToolStripMenuItem("Start with Windows")
+                    {
+                        CheckOnClick = true
+                    };
+                    startWithWindowsItem.CheckedChanged += StartWithWindowsItem_CheckedChanged;
+                    settingsMenu.DropDownItems.Add(startWithWindowsItem);
+                    settingsMenu.DropDownItems.Add("Change Flash Drive Label", null, ChangeFlashDriveLabel_Click);
+
+                    trayMenu.Items.Add(settingsMenu);
+
+                    trayMenu.Items.Add(new WinForms.ToolStripSeparator());
                     trayMenu.Items.Add("About", null, OpenAbout);
                     trayMenu.Items.Add(new WinForms.ToolStripSeparator());
                     trayMenu.Items.Add("Exit", null, Exit);
@@ -79,6 +91,24 @@ namespace ClipboardSyncApp
             {
                 LogMessage($"Error setting up tray icon: {ex.Message}\n{ex.StackTrace}");
             }
+        }
+
+        private void StartWithWindowsItem_CheckedChanged(object? sender, EventArgs e)
+        {
+            var menuItem = sender as WinForms.ToolStripMenuItem;
+            if (menuItem != null)
+            {
+                // Handle the logic to start with Windows based on menuItem.Checked
+                bool startWithWindows = menuItem.Checked;
+                // Update the setting accordingly
+                UpdateStartWithWindowsSetting(startWithWindows);
+            }
+        }
+
+        private void UpdateStartWithWindowsSetting(bool startWithWindows)
+        {
+            // Implement the logic to update the start with Windows setting
+            // For example, you might add/remove the app from the startup registry
         }
 
         private void ClipboardChanged(object? sender, EventArgs e)
@@ -105,8 +135,8 @@ namespace ClipboardSyncApp
 
             try
             {
-                // Delete existing files regardless of the new data type
-                DeleteExistingFiles(new string[] { htmlFilePath, rtfFilePath });
+                // Delete all previous clipboard files and directories
+                DeleteAllClipboardData();
 
                 if (clipboardData.GetDataPresent(System.Windows.DataFormats.Html))
                 {
@@ -132,28 +162,6 @@ namespace ClipboardSyncApp
 
                     string[] files = (string[])clipboardData.GetData(System.Windows.DataFormats.FileDrop);
                     var relativePaths = new List<string>();
-
-                    if (File.Exists(flashDrivePath))
-                    {
-                        string existingDataJson = File.ReadAllText(flashDrivePath);
-                        var existingData = JsonSerializer.Deserialize<ClipboardData>(existingDataJson);
-                        if (existingData != null && existingData.Type == System.Windows.DataFormats.FileDrop.ToString())
-                        {
-                            string[] existingFiles = existingData.Data.Split(';');
-                            foreach (string existingFile in existingFiles)
-                            {
-                                string fullPath = Path.Combine(GetFlashDrivePath(), existingFile);
-                                if (File.Exists(fullPath))
-                                {
-                                    File.Delete(fullPath);
-                                }
-                                else if (Directory.Exists(fullPath))
-                                {
-                                    Directory.Delete(fullPath, true);
-                                }
-                            }
-                        }
-                    }
 
                     for (int i = 0; i < files.Length; i++)
                     {
@@ -189,29 +197,6 @@ namespace ClipboardSyncApp
                 LogMessage($"Error saving clipboard to flash drive: {ex.Message}\n{ex.StackTrace}");
             }
         }
-
-        private void DeleteExistingFiles(string[] files)
-        {
-            foreach (var file in files)
-            {
-                if (File.Exists(file))
-                {
-                    File.Delete(file);
-                }
-            }
-
-            // Also delete files in the root directory of the flash drive
-            string flashDrivePath = GetFlashDrivePath();
-            if (!string.IsNullOrEmpty(flashDrivePath))
-            {
-                string[] existingFiles = Directory.GetFiles(flashDrivePath);
-                foreach (var existingFile in existingFiles)
-                {
-                    File.Delete(existingFile);
-                }
-            }
-        }
-
 
         private void LoadClipboardFromFlashDrive()
         {
@@ -432,6 +417,22 @@ namespace ClipboardSyncApp
                 LogMessage($"Error checking for flash drive: {ex.Message}\n{ex.StackTrace}");
             }
         }
+
+        private void DeleteAllClipboardData()
+        {
+            string flashDrivePath = GetFlashDrivePath();
+            if (Directory.Exists(flashDrivePath))
+            {
+                foreach (var file in Directory.GetFiles(flashDrivePath))
+                {
+                    File.Delete(file);
+                }
+                foreach (var dir in Directory.GetDirectories(flashDrivePath))
+                {
+                    Directory.Delete(dir, true);
+                }
+            }
+        }
     }
 
     public static class ClipboardNotification
@@ -503,4 +504,5 @@ namespace ClipboardSyncApp
         public string Type { get; set; } = string.Empty;
         public string Data { get; set; } = string.Empty;
     }
+
 }
