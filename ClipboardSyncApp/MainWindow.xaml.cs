@@ -136,59 +136,39 @@ namespace ClipboardSyncApp
 
         private async void SaveClipboardToFlashDrive(System.Windows.IDataObject clipboardData)
         {
-            await semaphore.WaitAsync();
+            string flashDrivePath = Path.Combine(GetFlashDrivePath(), ClipboardDataFileName);
+            string htmlFilePath = Path.Combine(GetFlashDrivePath(), ClipboardHtmlFileName);
+            string rtfFilePath = Path.Combine(GetFlashDrivePath(), ClipboardRtfFileName);
+
             try
             {
-                LogMessage("SaveClipboardToFlashDrive started.");
-                string flashDrivePath = Path.Combine(GetFlashDrivePath(), ClipboardDataFileName);
-                string htmlFilePath = Path.Combine(GetFlashDrivePath(), ClipboardHtmlFileName);
-                string rtfFilePath = Path.Combine(GetFlashDrivePath(), ClipboardRtfFileName);
+                // Delete old clipboard data based on the current contents of clipboard_data.json
+                await DeleteOldClipboardDataAsync(flashDrivePath);
 
                 if (clipboardData.GetDataPresent(System.Windows.DataFormats.Html))
                 {
-                    LogMessage("Clipboard data is HTML.");
-                    await DeleteExistingFilesAsync(new string[] { htmlFilePath, rtfFilePath, flashDrivePath });
-
                     string htmlData = (string)clipboardData.GetData(System.Windows.DataFormats.Html);
                     await File.WriteAllTextAsync(htmlFilePath, htmlData);
                     await File.WriteAllTextAsync(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = System.Windows.DataFormats.Html.ToString(), Data = ClipboardHtmlFileName }));
                 }
                 else if (clipboardData.GetDataPresent(System.Windows.DataFormats.Rtf))
                 {
-                    LogMessage("Clipboard data is RTF.");
-                    await DeleteExistingFilesAsync(new string[] { htmlFilePath, rtfFilePath, flashDrivePath });
-
                     string rtfData = (string)clipboardData.GetData(System.Windows.DataFormats.Rtf);
                     await File.WriteAllTextAsync(rtfFilePath, rtfData);
                     await File.WriteAllTextAsync(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = System.Windows.DataFormats.Rtf.ToString(), Data = ClipboardRtfFileName }));
                 }
                 else if (clipboardData.GetDataPresent(System.Windows.DataFormats.Text))
                 {
-                    LogMessage("Clipboard data is Text.");
-                    await DeleteExistingFilesAsync(new string[] { htmlFilePath, rtfFilePath, flashDrivePath });
-
                     string textData = (string)clipboardData.GetData(System.Windows.DataFormats.Text);
                     await File.WriteAllTextAsync(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = System.Windows.DataFormats.Text.ToString(), Data = textData }));
                 }
                 else if (clipboardData.GetDataPresent(System.Windows.DataFormats.FileDrop))
                 {
-                    LogMessage("Clipboard data is FileDrop.");
                     progressWindow = new ProgressWindow();
                     progressWindow.Show();
 
                     string[] files = (string[])clipboardData.GetData(System.Windows.DataFormats.FileDrop);
                     var relativePaths = new List<string>();
-
-                    if (File.Exists(flashDrivePath))
-                    {
-                        string existingDataJson = await File.ReadAllTextAsync(flashDrivePath);
-                        var existingData = JsonSerializer.Deserialize<ClipboardData>(existingDataJson);
-                        if (existingData != null && existingData.Type == System.Windows.DataFormats.FileDrop.ToString())
-                        {
-                            string[] existingFiles = existingData.Data.Split(';');
-                            await DeleteExistingFilesAsync(existingFiles.Select(f => Path.Combine(GetFlashDrivePath(), f)).ToArray());
-                        }
-                    }
 
                     for (int i = 0; i < files.Length; i++)
                     {
@@ -212,7 +192,6 @@ namespace ClipboardSyncApp
                 }
                 else
                 {
-                    LogMessage("Clipboard data is Unknown.");
                     await File.WriteAllTextAsync(flashDrivePath, JsonSerializer.Serialize(new ClipboardData { Type = "Unknown", Data = "Unsupported clipboard data format" }));
                 }
             }
@@ -224,9 +203,66 @@ namespace ClipboardSyncApp
             {
                 LogMessage($"Error saving clipboard to flash drive: {ex.Message}\n{ex.StackTrace}");
             }
-            finally
+        }
+
+        private async Task DeleteOldClipboardDataAsync(string flashDrivePath)
+        {
+            if (File.Exists(flashDrivePath))
             {
-                semaphore.Release();
+                try
+                {
+                    string existingDataJson = await File.ReadAllTextAsync(flashDrivePath);
+                    var existingData = JsonSerializer.Deserialize<ClipboardData>(existingDataJson);
+
+                    if (existingData != null)
+                    {
+                        if (existingData.Type == System.Windows.DataFormats.FileDrop.ToString())
+                        {
+                            string[] existingFiles = existingData.Data.Split(';');
+                            await DeleteExistingFilesAsync(existingFiles.Select(f => Path.Combine(GetFlashDrivePath(), f)).ToArray());
+                        }
+                        else if (existingData.Type == System.Windows.DataFormats.Html.ToString())
+                        {
+                            string htmlFilePath = Path.Combine(GetFlashDrivePath(), ClipboardHtmlFileName);
+                            await DeleteExistingFilesAsync(new string[] { htmlFilePath });
+                        }
+                        else if (existingData.Type == System.Windows.DataFormats.Rtf.ToString())
+                        {
+                            string rtfFilePath = Path.Combine(GetFlashDrivePath(), ClipboardRtfFileName);
+                            await DeleteExistingFilesAsync(new string[] { rtfFilePath });
+                        }
+                        else if (existingData.Type == System.Windows.DataFormats.Text.ToString())
+                        {
+                            // No additional files to delete for plain text
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"Error deleting old clipboard data: {ex.Message}\n{ex.StackTrace}");
+                }
+            }
+        }
+
+        private async Task DeleteExistingFilesAsync(string[] files)
+        {
+            foreach (var file in files)
+            {
+                try
+                {
+                    if (File.Exists(file))
+                    {
+                        await Task.Run(() => File.Delete(file));
+                    }
+                    else if (Directory.Exists(file))
+                    {
+                        await Task.Run(() => Directory.Delete(file, true));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"Error deleting file or directory '{file}': {ex.Message}\n{ex.StackTrace}");
+                }
             }
         }
 
@@ -276,28 +312,6 @@ namespace ClipboardSyncApp
             {
                 string tempPath = Path.Combine(destinationDir, subDir.Name);
                 await CopyDirectoryAsync(subDir.FullName, tempPath, currentItem, totalItems);
-            }
-        }
-
-        private async Task DeleteExistingFilesAsync(string[] files)
-        {
-            foreach (var file in files)
-            {
-                try
-                {
-                    if (File.Exists(file))
-                    {
-                        await Task.Run(() => File.Delete(file));
-                    }
-                    else if (Directory.Exists(file))
-                    {
-                        await Task.Run(() => Directory.Delete(file, true));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogMessage($"Error deleting file or directory '{file}': {ex.Message}\n{ex.StackTrace}");
-                }
             }
         }
 
